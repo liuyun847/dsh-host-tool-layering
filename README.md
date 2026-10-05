@@ -1,6 +1,6 @@
 # dsh-host-tool-layering
 
-> **v0.1.0** · 宿主插件（DSH desktop profile）· 状态：**已写好、未装机**（装机/停用旧插件由另一路执行）
+> **v0.1.0** · 宿主插件（DSH desktop profile）· 状态：**已装机并在本机运行**（装机三步见 §11，逐项复核清单见 §13）
 > 一句话：**不做任何检测，任何会话一律把配置里各组前缀下的工具从"模型可见工具表"里摘掉，并逐组计数。**
 
 | | |
@@ -296,7 +296,7 @@ node --test "test/*.test.mjs"
 
 ## 11. 注册、启用、停用与回滚
 
-**三步缺一不可**（与旧插件同形，装机由另一路执行）：
+**三步缺一不可**（与旧插件同形；本机已完成装机，以下步骤供其它机器参考）：
 
 1. **profile 依赖 + 组合包成员**：`~\.dsh\profiles\desktop\package.json` 的 `dependencies` 里要有
    `"dsh-host-tool-layering": "file:./plugins/dsh-host-tool-layering"`，且包名在同文件的
@@ -398,8 +398,8 @@ $text = Get-Content -Raw -Encoding UTF8 $path   # 或由别处取到新内容
 - **`groups:` 空值 ≠ `groups: []`**（§4.1）—— 最容易踩的一处，已在插件挂载日志与 README 双重点明。
 - **两组 token 数来自不同日期的两次实测**（CUA = 24,832 token @2026-10-04；godot = 9,599 wire token
   @2026-09-14，那次基线是 88 个 / 18,574 token），口径不完全可比，别把两者相加当成"当前工具表总额"。
-- **未装机验证项**：本包尚未注册进 profile，`apply()` 在真实宿主里的表现（挂载日志、首次装配、
-  与旧插件共存的那一次交接）都还没有实机日志证据；§13 是给装机那一路的验收清单。
+- **实机验证范围**：本机（desktop profile）已装机运行（profile 的 `dependencies` 与 `dsh.profile.bundles` 均已登记、
+  `node_modules` 副本在位）；启用后的逐项复核清单见 §13，别的机器可照同样清单自查。
 
 ---
 
