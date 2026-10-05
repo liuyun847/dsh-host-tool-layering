@@ -348,7 +348,7 @@ $text = Get-Content -Raw -Encoding UTF8 $path   # 或由别处取到新内容
 
 改完逐文件核对：
 
-- **硬链接文件**比 `fileId`（`Get-Item <路径> | Select-Object -ExpandProperty FileId`，或 `fsutil hardlink list <路径>`）——必须相同，说明链接没断；
+- **硬链接文件**比 inode 与链接条数（`fsutil file queryFileID <路径>` 取 inode、`fsutil hardlink list <路径>` 列链接路径）——同 inode 且条数不变才算链接没断（⚠ 别用 `(Get-Item).FileId` 查 inode：本机 PowerShell 下它返回**空值**，两次空值相等会把“同一个 inode”误判成事实）；
 - **拷贝文件**比 SHA256（`Get-FileHash`）——必须相同，说明副本已同步；
 - 删掉的文件要**从副本里也删掉**（`test/` 不进副本：`package.json` 的 `files` 只有 `lib` + `cordis.patch.yml`，
   加上 npm/pnpm 无条件纳入的 `package.json` / `README.md`）。
@@ -360,7 +360,7 @@ $text = Get-Content -Raw -Encoding UTF8 $path   # 或由别处取到新内容
 ## 13. 验证清单（启用后按顺序做）
 
 1. `cd` 到插件目录跑 `node --test "test/*.test.mjs"` ⇒ `68 pass / 0 fail`。
-2. 源目录与 `node_modules` 副本逐文件核对（§12）：硬链接比 `fileId`、拷贝比 SHA256。
+2. 源目录与 `node_modules` 副本逐文件核对（§12）：硬链接比 inode 与链接条数、拷贝比 SHA256。
 3. 包内 `cordis.patch.yml` 可被 YAML 解析，insert 条目数不变，`config.groups` 是期望的两组。
 4. 触发一次重组合后立刻看宿主日志：
 
