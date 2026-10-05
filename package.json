@@ -1,0 +1,42 @@
+{
+  "name": "dsh-host-tool-layering",
+  "description": "DSH 宿主插件:在 system prompt 组装的 system-prompt/assemble 水线上,【不做任何检测、任何会话一律把各组前缀下的工具从模型可见工具表摘掉】,并逐组计数。组表在配置面上(每组 = 一批工具的前缀 + 一个说明技能),默认两组:cua(cua_driver_native__ 56 个)+ godot(mcp__godot_use__ 39 个),即 dsh-host-godot-tool-layering v0.2.0 的泛化版。模型侧改由技能当说明书(每组一个,默认 computer-control / godot-use),按完整名直接调用。装配时校验 ~\\.dsh\\skills\\<skill>\\SKILL.md 是否存在(结果缓存),不存在就打 warn 点名 —— 工具摘了却没有说明书,模型对该能力彻底失明。前缀重叠时长的先匹配,每个工具恰好算给一组。纯函数且幂等,无改动时返回同一个 assembly 引用(否则 dsh-agent-loop 的 toolsChanged() 会每轮追加 request/header 记录);无相应工具在场时静默 no-op;工具在场却零命中前缀时按组打一条 warn(fail-loud,防上游改名后静默白装);配置非法(config 非对象/diag 非布尔/groups 非数组/组项缺 prefix/prefix 非字符串或空串)时只打 error 并不注册水线(不抛错 ⇒ 不影响宿主启动、不连带回滚同层 patch);groups 为空数组是合法配置(不注册水线,静默 no-op);不认得的键(含组内)只 warn 点名后忽略(拒绝会让工具重新可见,与目标相反)。【边界:只筛宣布面,不是能力边界】摘除不影响按名调用(执行解析走 dsh-tools 注册表视图,从不读装配体),也不影响 PTC/both 会话的 run_code 内派发(那走 sdkSchemas);官方能力闸门是 tools.restrict(),本插件故意不用。第三方包(含 npx 缓存)一个字节都不动,因此无需 patch-guard 守护。",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "tool-layering",
+    "context-optimization"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/liuyun847/dsh-host-tool-layering.git"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  }
+}

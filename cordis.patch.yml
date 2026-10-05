@@ -1,0 +1,76 @@
+# dsh-host-tool-layering 的包内 patch（组合包 bundle patch）。
+# 本包随 profile 的 dsh.profile.bundles 加载时，由 loader 应用本文件。
+# 启停：插件页「已安装」里本卡的总开关(写 bundles)，或卡片详情里的行级开关
+# (向 profile 的 cordis.patch.yml 写 disabled 覆盖)。
+# 行 id `tool-layering` 是上述开关与 settings 命名空间的寻址键，勿改。
+#
+# ── 它是干什么的 ───────────────────────────────────────────────────────────
+# 在 system prompt 组装的 system-prompt/assemble 水线上，**不做任何检测、任何会话**
+# 把配置里各组前缀下的工具全部从"模型可见工具表"里摘掉，并逐组计数。
+# 组表就在下面 config.groups 里：每组 = 一批工具的前缀(prefix) + 一个说明技能(skill)。
+# 默认两组(2026-10-04 实测的常驻成本):
+#   · cua   —— cua_driver_native__ 前缀 56 个工具 / 24,832 wire token → 技能 computer-control
+#   · godot —— mcp__godot_use__    前缀 39 个工具 /  9,599 wire token → 技能 godot-use
+# 两组合计 34,431 token，占模型可见工具表 88 个 / 32,024 token（旧基线）的绝大部分。
+#
+# ── 组语义(逐条) ──────────────────────────────────────────────────────────
+# · name    仅用于日志点名(`present=56 removed=56 (cua)` 里的 cua)；不写则由 prefix 推出
+#            (`mcp__godot_use__` → godot，`cua_driver_native__` → cua)。
+# · prefix  该组工具名的公共前缀，是**唯一**的识别依据。空前缀是非法配置 ——
+#            `''.startsWith('')` 恒真，会把所有工具都摘掉。
+# · skill   说明技能名(目录名)，装配时校验 `~\.dsh\skills\<skill>\SKILL.md` 是否存在
+#            (结果按技能名缓存，进程内只 stat 一次)。不存在就打一条 warn 点名 ——
+#            **工具摘了却没有说明书，模型对该能力彻底失明**，这条必须 fail-loud。
+#            没配 skill 也是合法的，但挂载时会 warn 一次(同一件事的另一半)。
+# · 前缀重叠时**长的先匹配**，每个工具恰好算给一组 ⇒ 逐组计数不会重复计。
+# · groups 写成空数组 `[]` 是**合法**配置 ⇒ 不注册水线、一个工具都不摘(静默 no-op)；
+#   ⚠ 想全关请写 `groups: []`，别写成空值 `groups:`(YAML 空值得到 null，按"未设置"处理 ⇒ 用默认两组)。
+#
+# ── 与 dsh-host-godot-tool-layering 的关系 ────────────────────────────────
+# 本插件是那份插件 v0.2.0 的**泛化**：那边把"一个 godot 前缀 + 一个 godot-use 技能"编在
+# 代码里，这边抽成配置面的一张组表。godot 那一组的语义与它完全等价(同样是"不做检测、
+# 任何会话一律全摘")。两者**同时启用不会冲突**(摘除是幂等的，谁先摘另一个看到 present=0),
+# 但同时启用没有意义：建议本插件生效后停用旧插件(见 README §11)。
+#
+# ── 边界(重要) ────────────────────────────────────────────────────────────
+# 摘的是**宣布面**(模型看不看得见)，**不是能力边界** —— 按完整名调用仍会成功执行
+# (执行解析走 dsh-tools 注册表视图，从不读装配体)；PTC/both 模式下 run_code 内仍可调
+# 全部工具(那走 sdkSchemas)。要真边界请另用官方 tools.restrict({deny})。详见 README「能力边界」。
+#
+# ── 失效语义 ──────────────────────────────────────────────────────────────
+# · 配置非法(config 非对象 / diag 非布尔 / groups 非数组 / 组项缺 prefix / prefix 非字符串或空串)
+#   ⇒ 只打一条 error 并且不注册水线(插件不生效)。**不抛错** ⇒ 不影响宿主启动，
+#   0.1.7-rc.1 起 loader 1.0.5 已取消事务回滚，也不会连带同层其它 insert 行。
+# · 某组工具在场却零命中该组前缀 ⇒ 该组打一条 warn(fail-loud，每组只打一次)：
+#   防上游改 serverName / 前缀写错之后"插件看着在跑、实际白装"。
+# · 某组真的摘了工具、但它配的 SKILL.md 不存在 ⇒ 打一条 warn 点名缺失路径(每个技能只打一次)。
+# · 不认得的键(顶层或组内)只 warn 点名后忽略：拒绝会让工具重新出现在可见工具表里，与目标相反。
+#
+# ── 生效 ⚠ ────────────────────────────────────────────────────────────────
+# 包内本文件**不会自己触发重组合** —— dsh-hmr 只监视三个输入：profile 的 cordis.patch.yml、
+# home 层 cordis.patch.yml、profile 的 package.json(dsh-hmr/lib/index.js:353-376)，
+# 包内本文件不在其中。重组合会重读全部 bundle 层，所以改完本文件要有一次触发才被读入：
+# 在插件页点一下本卡(或任意行级)开关，或在 profile 的 cordis.patch.yml 里保存任意一处改动。
+# ⚠ 改包内 lib/*.js 仍需重启 dsh —— loader 复用已 import 的模块实例(依据见 README §9)，
+# 所以流程永远是"先改代码、后改配置"，改完立刻看日志里的挂载行是不是新文案。
+#
+# ── 回滚 / 调整 ───────────────────────────────────────────────────────────
+# · 只让某组工具重新可见 ⇒ 把那组从 groups 里删掉(或注释掉)后触发一次重组合；
+#   也可以临时把该组 prefix 改成一个不会命中的值(不推荐：会多一条 fail-loud warn)。
+# · 整个插件停用 ⇒ profile 的 cordis.patch.yml 里写 `- id: tool-layering` + `disabled: true`
+#   (profile 层在包层之后应用 ⇒ 覆写优先)，或用插件页里本卡/本行的开关；
+# · 彻底移除 ⇒ dshpm remove dsh-host-tool-layering，再删源码目录。
+# 不需要 patch-guard 守护：本插件不碰任何第三方文件(含 npx 缓存)，也不改任何宿主源码，
+#   只读自己的配置，以及 `~\.dsh\skills\<skill>\SKILL.md` 的**存在性**。
+- insert:
+    - id: tool-layering
+      name: 'dsh-host-tool-layering'
+      config:
+        diag: false
+        groups:
+          - name: cua
+            prefix: 'cua_driver_native__'
+            skill: computer-control
+          - name: godot
+            prefix: 'mcp__godot_use__'
+            skill: godot-use
