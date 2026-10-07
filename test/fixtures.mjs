@@ -119,12 +119,26 @@ export const GODOT_RAW_NAMES = Object.freeze([
 export const CUA_FULL_NAMES = Object.freeze(CUA_RAW_NAMES.map((raw) => `cua_driver_native__${raw}`))
 export const GODOT_FULL_NAMES = Object.freeze(GODOT_RAW_NAMES.map((raw) => `mcp__godot_use__${raw}`))
 
-/** 不属于任何组、必须一个不动的工具（内置 / 其它 MCP server / 计划任务等）。 */
+/**
+ * 本插件自己的入口工具名（**每组一个**，v0.3.0 起；见 `lib/entry.js` 与 README §3）。
+ * 它们**不匹配任何组前缀**，所以永远不该被摘 —— 这里把两个都列进 `NON_LAYERED_NAMES`，
+ * 让"入口工具必须在表里"这条跟着每个装配体断言一起被验证。
+ *
+ * ⚠ 两个名字**各自含**本组的宽松关键词（`get_cua` ⊃ `cua`、`get_godot` ⊃ `godot`），
+ * 所以它们还必须是 fail-loud 启发式的 `ignoreNames`（回归测试见 assembly/plugin 两个文件）。
+ */
+export const CUA_ENTRY_TOOL_NAME = 'get_cua'
+export const GODOT_ENTRY_TOOL_NAME = 'get_godot'
+export const ENTRY_TOOL_NAMES = Object.freeze([CUA_ENTRY_TOOL_NAME, GODOT_ENTRY_TOOL_NAME])
+
+/** 不属于任何组、必须一个不动的工具（内置 / 其它 MCP server / 本插件两个入口工具）。 */
 export const NON_LAYERED_NAMES = Object.freeze([
   'ask_user_question',
   'create_goal',
   'edit',
   'exit_plan_mode',
+  CUA_ENTRY_TOOL_NAME,
+  GODOT_ENTRY_TOOL_NAME,
   'get_goal',
   'glob',
   'grep',
@@ -216,6 +230,30 @@ export function makeAssembly(options = {}) {
     contexts: [{ name: 'runtime', text: 'runtime context' }],
     tools,
     variables: { provider: 'test', model: 'test-model', cwd: 'C:\\fixture' },
+  }
+}
+
+/**
+ * 造一个假 `ctx`：`on` 记下水线注册参数，`tools.register` 记下工具注册，日志进 `logs`。
+ *
+ * 为什么两者分开记：`entries` 是"挂了哪条水线"的契约（水线只能有一条），
+ * `registered` 是"注册了哪些工具"的契约（v0.2.0 起入口工具也走这里；v0.3.0 起每组一个）——
+ * 混在一个数组里会让两条断言互相干扰。
+ *
+ * @returns {{entries: object[], registered: object[], logs: object[], logger: object, on: Function, tools: object}} 假 ctx。
+ */
+export function makeMockCtx() {
+  const entries = []
+  const registered = []
+  const logs = []
+  const push = (fn) => (message) => logs.push({ fn, message })
+  return {
+    entries,
+    registered,
+    logs,
+    logger: { info: push('info'), warn: push('warn'), error: push('error') },
+    on(event, handler, options) { entries.push({ event, handler, options }) },
+    tools: { register(definition) { registered.push(definition); return () => {} } },
   }
 }
 

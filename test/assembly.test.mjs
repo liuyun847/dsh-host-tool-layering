@@ -1,6 +1,9 @@
 /**
  * `lib/assembly.js` 的契约测试：多组同时命中 / 只有一组命中 / 前缀重叠（长的先匹配）/
- * 空组表 / 幂等 / 只删不重建 / 形状防御 / 宽松启发式计数。
+ * 空组表 / 幂等 / 只删不重建 / 形状防御 / 宽松启发式计数 / **按 `(会话, 组)` 放行**。
+ *
+ * v0.3.0 的签名变化：`sessionArmed: boolean` → `armedGroups: Set<组名>`（放行粒度从"整个会话"
+ * 收紧到"某一组"）。所有既有断言逐条保留，只把入参换成集合；新增的都是"只放行其中一组"。
  */
 
 import assert from 'node:assert/strict'
@@ -20,8 +23,11 @@ import {
 /** 标准两组（就是插件默认的那两组，去掉用不到的字段）。 */
 const GROUPS = DEFAULT_GROUPS.map(({ name, prefix }) => ({ name, prefix }))
 
-/** 标准处理参数。 */
+/** 标准处理参数（一个组都没放行）。 */
 const OPTIONS = { groups: GROUPS }
+
+/** "两组都已放行"的集合。 */
+const BOTH_ARMED = new Set(['cua', 'godot'])
 
 /** 小工具：按完整名造一个工具对象。 */
 function tool(toolName) {
@@ -258,11 +264,16 @@ test('buildMatchers：按前缀长度降序排，且带回组表下标（对外�
   assert.deepEqual(buildMatchers([{ prefix: 'mcp__godot_use__' }]).map((m) => m.name), ['godot'])
 })
 
-test('zeroCounts：形状固定（name/prefix/present/removed/removedNames 都在）', () => {
+test('zeroCounts：形状固定（name/prefix/armed/present/removed/removedNames 都在），armed 逐组判定', () => {
   assert.deepEqual(zeroCounts(GROUPS), [
-    { name: 'cua', prefix: 'cua_driver_native__', present: 0, removed: 0, removedNames: [] },
-    { name: 'godot', prefix: 'mcp__godot_use__', present: 0, removed: 0, removedNames: [] },
+    { name: 'cua', prefix: 'cua_driver_native__', armed: false, present: 0, removed: 0, removedNames: [] },
+    { name: 'godot', prefix: 'mcp__godot_use__', armed: false, present: 0, removed: 0, removedNames: [] },
   ])
+  // v0.3.0：已放行是一个**组名集合**，不是布尔 ⇒ 只放行 cua 时 godot 必须仍是 false
+  //（这是 lib/index.js 用来跳过"已生效"/fail-loud 的判据）
+  assert.deepEqual(zeroCounts(GROUPS, new Set(['cua'])).map((part) => part.armed), [true, false])
+  assert.deepEqual(zeroCounts(GROUPS, BOTH_ARMED).map((part) => part.armed), [true, true])
+  assert.deepEqual(zeroCounts(GROUPS, new Set()).map((part) => part.armed), [false, false])
 })
 
 test('countLikeTools：宽松关键词由前缀推出，只在严格通道零命中时才有意义', () => {
@@ -300,6 +311,30 @@ test('countLikeTools：关键词推不出时（空前缀）宽松通道整体关
   assert.equal(counts.loose, 0, '空前缀不该把所有工具都算成"像本组工具"')
 })
 
+test('countLikeTools：ignoreNames 必须排除本插件**全部**入口工具（get_cua 含 cua、get_godot 含 godot）', () => {
+  // 回归（v0.2.0 实测踩到、v0.3.0 变成两个名字）：入口工具缺省名里含本组宽松关键词
+  // ⇒ 不排除就会在"本会话没有该组工具在场"时打出假 fail-loud。
+  const tools = [{ name: 'get_cua' }, { name: 'get_godot' }, { name: 'read' }]
+  assert.equal(countLikeTools(tools, 'cua_driver_native__').loose, 1, '不排除时 get_cua 确实会被误算')
+  assert.equal(countLikeTools(tools, 'mcp__godot_use__').loose, 1, '不排除时 get_godot 确实会被误算')
+  const ignoreNames = new Set(['get_cua', 'get_godot'])
+  assert.equal(countLikeTools(tools, 'cua_driver_native__', { ignoreNames }).loose, 0)
+  assert.equal(countLikeTools(tools, 'mcp__godot_use__', { ignoreNames }).loose, 0)
+
+  // 排除只针对点名的那几个：真正"像本组"的改名工具照样算得出来
+  const renamed = [
+    { name: 'get_cua' }, { name: 'get_godot' },
+    { name: 'mcp__cua_pre__click' }, { name: 'mcp__godot__x' }, { name: 'read' },
+  ]
+  assert.equal(countLikeTools(renamed, 'cua_driver_native__', { ignoreNames }).loose, 1,
+    'exclude 不能把 fail-loud 一起关掉')
+  assert.equal(countLikeTools(renamed, 'mcp__godot_use__', { ignoreNames }).loose, 1,
+    '两组各自的改名工具都要能被数出来')
+  // 非 Set / 未传时行为与旧签名完全一致
+  assert.equal(countLikeTools(tools, 'cua_driver_native__', {}).loose, 1)
+  assert.equal(countLikeTools(tools, 'cua_driver_native__', { ignoreNames: ['get_cua'] }).loose, 1, '只认 Set')
+})
+
 test('多组时逐组计数与单组单独跑的结果一致（互不干扰）', () => {
   const assembly = makeAssembly()
   const both = removeToolsByGroups(assembly.tools, GROUPS)
@@ -307,4 +342,136 @@ test('多组时逐组计数与单组单独跑的结果一致（互不干扰）',
   const godotOnly = removeToolsByGroups(godotTools(), [GROUPS[1]])
   assert.equal(both.perGroup[0].removed, cuaOnly.perGroup[0].removed)
   assert.equal(both.perGroup[1].removed, godotOnly.perGroup[0].removed)
+})
+
+test('⑫ 两组全部放行：一个工具都不摘、同引用、逐组计数全零且 armed=true', () => {
+  const assembly = makeAssembly()
+  const inputTools = assembly.tools
+  const snapshot = JSON.stringify(assembly)
+
+  const result = processAssembly(assembly, { groups: GROUPS, armedGroups: BOTH_ARMED })
+
+  assert.equal(result.changed, false)
+  assert.equal(result.assembly, assembly, '放行时必须返回入参同一个 assembly 引用（否则每步都会追写 request/header）')
+  assert.equal(result.assembly.tools, inputTools, '工具数组也必须是同一个引用')
+  assert.equal(result.totalPresent, 0)
+  assert.equal(result.totalRemoved, 0)
+  assert.deepEqual(result.removedNames, [])
+  assert.deepEqual(result.perGroup, [
+    { name: 'cua', prefix: 'cua_driver_native__', armed: true, present: 0, removed: 0, removedNames: [] },
+    { name: 'godot', prefix: 'mcp__godot_use__', armed: true, present: 0, removed: 0, removedNames: [] },
+  ], '计数必须全零：present=56 会让 lib/index.js 打出假的 fail-loud warn')
+  assert.equal(JSON.stringify(assembly), snapshot, '放行不得改动入参')
+  assert.equal(assembly.tools.length, 56 + 39 + NON_LAYERED_NAMES.length, '95 个组内工具一个都没少')
+})
+
+test('⑬ 对照：同一个装配体，未放行全摘 / 两组都放行全留，差别只在 armedGroups 这一个集合', () => {
+  const unarmed = processAssembly(makeAssembly(), { groups: GROUPS })
+  const armed = processAssembly(makeAssembly(), { groups: GROUPS, armedGroups: BOTH_ARMED })
+
+  assert.equal(unarmed.changed, true)
+  assert.deepEqual(unarmed.perGroup.map((p) => [p.armed, p.present, p.removed]), [[false, 56, 56], [false, 39, 39]])
+  assert.equal(unarmed.assembly.tools.length, NON_LAYERED_NAMES.length)
+
+  assert.equal(armed.changed, false)
+  assert.deepEqual(armed.perGroup.map((p) => [p.armed, p.present, p.removed]), [[true, 0, 0], [true, 0, 0]])
+  assert.equal(armed.assembly.tools.length, 56 + 39 + NON_LAYERED_NAMES.length)
+
+  // 未放行那一侧照旧只删不重建：留下的每个都是入参里的同一个引用
+  const source = makeAssembly()
+  const kept = processAssembly(source, { groups: GROUPS }).assembly.tools
+  for (const item of kept) assert.ok(source.tools.includes(item), `工具对象引用被重建：${item.name}`)
+})
+
+test('⑭ 按组放行：只放行 cua ⇒ cua 的工具一个不动、godot 照旧全摘（v0.3.0 的核心语义）', () => {
+  const assembly = makeAssembly()
+  const inputTools = assembly.tools
+  const result = processAssembly(assembly, { groups: GROUPS, armedGroups: new Set(['cua']) })
+
+  assert.equal(result.changed, true, 'godot 那组还在摘，所以装配体确实变了')
+  assert.notEqual(result.assembly, assembly)
+  assert.equal(result.perGroup[0].armed, true, 'cua 被标 armed')
+  assert.equal(result.perGroup[0].present, 0, '被放行的组不计数（否则会打出假的 fail-loud）')
+  assert.equal(result.perGroup[0].removed, 0)
+  assert.deepEqual(result.perGroup[0].removedNames, [])
+  assert.deepEqual(result.perGroup[1].armed, false)
+  assert.equal(result.perGroup[1].present, 39)
+  assert.equal(result.perGroup[1].removed, 39)
+
+  // 留下来的 = 非组内那批 + 全部 56 个 CUA 工具（顺序仍是入参顺序的子序列）
+  assert.equal(result.assembly.tools.length, NON_LAYERED_NAMES.length + 56)
+  assert.deepEqual(
+    result.assembly.tools.filter((t) => t.name.startsWith('cua_driver_native__')).length,
+    56,
+  )
+  assert.equal(result.assembly.tools.some((t) => t.name.startsWith('mcp__godot_use__')), false)
+
+  // 组表顺序与下标对齐：perGroup[0] 永远是 cua，perGroup[1] 永远是 godot
+  assert.deepEqual(result.perGroup.map((p) => p.name), ['cua', 'godot'])
+  // 放行的那组不进 totalRemoved / removedNames
+  assert.equal(result.totalRemoved, 39)
+  assert.equal(result.removedNames.some((n) => n.startsWith('cua_driver_native__')), false)
+  assert.equal(new Set(result.removedNames).size, result.removedNames.length)
+  // 被放行的工具对象仍是入参那批引用（没被重建、没被移动）
+  for (const item of result.assembly.tools) {
+    assert.ok(inputTools.includes(item), `工具对象引用被重建：${item.name}`)
+  }
+
+  // 反向：只放行 godot ⇒ 镜像结论
+  const mirror = processAssembly(makeAssembly(), { groups: GROUPS, armedGroups: new Set(['godot']) })
+  assert.deepEqual(mirror.perGroup.map((p) => [p.name, p.armed, p.present, p.removed]),
+    [['cua', false, 56, 56], ['godot', true, 0, 0]])
+  assert.equal(mirror.assembly.tools.filter((t) => t.name.startsWith('mcp__godot_use__')).length, 39)
+  assert.equal(mirror.assembly.tools.some((t) => t.name.startsWith('cua_driver_native__')), false)
+})
+
+test('⑮ 放行集合的取值纪律：非 Set 一律按"一个组都没放行"处理（宁可照旧全摘）', () => {
+  const tools = makeAssembly().tools
+
+  const all = removeToolsByGroups(tools, GROUPS, { armedGroups: BOTH_ARMED })
+  assert.equal(all.tools, tools)
+  assert.equal(all.changed, false)
+  assert.deepEqual(all.perGroup.map((p) => p.armed), [true, true])
+
+  // 短路发生在形状校验之前：非数组输入在"两组都放行"这条路上一律原样返回
+  for (const bad of [undefined, null, 'read', {}]) {
+    const result = removeToolsByGroups(bad, GROUPS, { armedGroups: BOTH_ARMED })
+    assert.equal(result.tools, bad)
+    assert.equal(result.changed, false)
+  }
+
+  // 明确传空集合时行为与不传完全一致
+  const explicitEmpty = removeToolsByGroups(tools, GROUPS, { armedGroups: new Set() })
+  assert.equal(explicitEmpty.changed, true)
+  assert.equal(explicitEmpty.totalRemoved, 95)
+
+  // 空组表 + 两组放行：仍然 no-op，perGroup 为空
+  const emptyGroups = processAssembly(makeAssembly(), { groups: [], armedGroups: BOTH_ARMED })
+  assert.deepEqual(emptyGroups.perGroup, [])
+  assert.equal(emptyGroups.changed, false)
+
+  // 非 Set 值一律按"没放行"处理（登记表/配置出错时宁可照旧摘，也不静默全放行）
+  for (const weird of [true, 1, 'cua', ['cua'], { cua: true }]) {
+    const result = processAssembly(makeAssembly(), { groups: GROUPS, armedGroups: weird })
+    assert.equal(result.changed, true, `只有 Set 才算放行：${JSON.stringify(weird)}`)
+    assert.deepEqual(result.perGroup.map((p) => p.armed), [false, false])
+  }
+})
+
+test('⑯ 放行与归属解耦：即使被放行的组不是"最长前缀"的那组，归属判定也不变', () => {
+  const groups = [
+    { name: 'outer', prefix: 'mcp__x__' },
+    { name: 'inner', prefix: 'mcp__x__y__' },
+  ]
+  const tools = [tool('mcp__x__y__z'), tool('mcp__x__a'), tool('read')]
+
+  // 放行 outer：inner 的工具仍归 inner（最长前缀），照旧被摘
+  const result = removeToolsByGroups(tools, groups, { armedGroups: new Set(['outer']) })
+  assert.deepEqual(result.perGroup.map((p) => [p.name, p.armed, p.present]), [['outer', true, 0], ['inner', false, 1]])
+  assert.deepEqual(result.tools.map((t) => t.name), ['mcp__x__a', 'read'])
+
+  // 反向：放行 inner ⇒ outer 照摘，inner 的同名工具留下
+  const mirror = removeToolsByGroups(tools, groups, { armedGroups: new Set(['inner']) })
+  assert.deepEqual(mirror.perGroup.map((p) => [p.name, p.armed, p.present]), [['outer', false, 1], ['inner', true, 0]])
+  assert.deepEqual(mirror.tools.map((t) => t.name), ['mcp__x__y__z', 'read'])
 })
