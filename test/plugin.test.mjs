@@ -82,7 +82,7 @@ test('apply：挂 system-prompt/assemble 水线，注册参数必须是 { global
   assert.match(line.message, /cua → get_cua/, '挂载日志要点名"每组一个入口工具"的对应关系')
   assert.match(line.message, /godot → get_godot/)
   assert.match(line.message, /只放回那一组/, '要说清入口是**按组**的（v0.3.0 的核心口径）')
-  assert.match(line.message, /v0\.3\.0/, '挂载日志应带版本号')
+  assert.match(line.message, /v0\.3\.1/, '挂载日志应带版本号')
   assert.equal(ctx.logs.some((l) => l.fn === 'warn'), false)
 })
 
@@ -789,7 +789,7 @@ test('放行⑨：端到端（不启动 dsh）—— apply 注册的两个入口
   apply(ctx, {})
   const handler = ctx.entries[0].handler
   const [cuaTool, godotTool] = ctx.registered
-  const session = contextOf('session-aaaa1111-2222-3333-4444-555555555555')
+  const session = contextOf('session-11111111-1111-4111-8111-111111111111')
 
   const before = makeAssembly()
   const outBefore = await handler(before, session, nextOf(before))
@@ -797,7 +797,7 @@ test('放行⑨：端到端（不启动 dsh）—— apply 注册的两个入口
     '调用入口工具之前：模型看不见 CUA 工具（这就是当初那次失败的条件）')
   assert.equal(outBefore.tools.some((t) => t.name.startsWith('mcp__godot_use__')), false)
 
-  const cuaValue = await cuaTool.execute({}, { agent: { id: 'session-aaaa1111-2222-3333-4444-555555555555' } })
+  const cuaValue = await cuaTool.execute({}, { agent: { id: 'session-11111111-1111-4111-8111-111111111111' } })
   assert.deepEqual(cuaValue, { group: 'cua', armed: true, alreadyArmed: false })
   // 宿主会拿 output.schema 校验返回体（dsh-tools 的 snapshotToolValue → INVALID_TOOL_OUTPUT），
   // 这里用同一个校验器把关，避免"返回体不合 schema"这种只在真机上炸的坑。
@@ -812,7 +812,7 @@ test('放行⑨：端到端（不启动 dsh）—— apply 注册的两个入口
     'godot 没被点开 ⇒ 仍被摘（v0.3.0 的按组独立）')
 
   // 再放 godot：整表原样回来
-  const godotValue = await godotTool.execute({}, { agent: { id: 'session-aaaa1111-2222-3333-4444-555555555555' } })
+  const godotValue = await godotTool.execute({}, { agent: { id: 'session-11111111-1111-4111-8111-111111111111' } })
   assert.deepEqual(godotValue, { group: 'godot', armed: true, alreadyArmed: false })
   const step3 = makeAssembly()
   const outStep3 = await handler(step3, session, nextOf(step3))
